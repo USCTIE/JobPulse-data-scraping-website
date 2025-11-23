@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobPulse — Octoparse Task Runner</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>JobPulse — Octoparse Task Runner</h1>
+
+    <div class="card">
+      <div class="row">
+        <button id="loginBtn">Login to Octoparse</button>
+        <span id="loginStatus">Not logged in</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card" style="margin-top: 20px;">
+        <h2>Task Groups</h2>
+        <select id="groupSelect"></select>
+        <button id="reloadGroups">Reload Groups</button>
+      </div>
+
+      <div class="card" style="min-width: 600px; margin-top: 20px;">
+        <h2>Tasks in Group</h2>
+        <div id="tasksList" class="tasks"></div>
+        <div class="row">
+          <button id="runAll">Run all tasks → Export Excel</button>
+          <button id="runSelected">Run selected → Export Excel</button>
+          <button id="deselectAll">Deselect all</button>
+          <button id="selectAll">Select all</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Logs</h2>
+      <pre id="logs" class="logs"></pre>
+    </div>
+  </div>
+
+  <script src="/static/taskrunner.js"></script>
+</body>
+</html>

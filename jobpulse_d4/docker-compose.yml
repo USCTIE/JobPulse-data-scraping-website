@@ -1,0 +1,31 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: jobpulse
+      MYSQL_USER: jobuser
+      MYSQL_PASSWORD: jobpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql:ro
+
+  web:
+    build: ./backend
+    depends_on:
+      - db
+    env_file:
+      - ./backend/.env
+    environment:
+      FLASK_ENV: development
+      DB_HOST: db
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+
+volumes:
+  db_data:

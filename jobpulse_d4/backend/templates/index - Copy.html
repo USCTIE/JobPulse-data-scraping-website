@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobPulse — Deliverable 4</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>JobPulse — Deliverable 4</h1>
+    <div class="grid">
+      <input id="q" placeholder="Title (e.g., Software Engineer)">
+      <input id="geo" placeholder="Geography (e.g., Los Angeles)">
+      <select id="employment">
+        <option value="">Employment Type</option>
+        <option>Full-time</option>
+        <option>Part-time</option>
+        <option>Contract</option>
+      </select>
+      <select id="seniority">
+        <option value="">Seniority</option>
+        <option>Internship</option>
+        <option>Entry level</option>
+        <option>Associate</option>
+        <option>Mid-Senior</option>
+      </select>
+      <input id="start" type="date">
+      <input id="end" type="date">
+      <select id="sort">
+        <option value="post_time">Sort by Date</option>
+        <option value="title">Sort by Title</option>
+        <option value="company">Sort by Company</option>
+      </select>
+      <select id="order">
+        <option value="desc">Desc</option>
+        <option value="asc">Asc</option>
+      </select>
+    </div>
+
+    <div class="actions">
+      <button id="searchBtn">Search</button>
+      <button id="csvBtn">Export CSV</button>
+      <button id="jsonBtn">Export JSON</button>
+      <span id="meta"></span>
+    </div>
+
+    <table id="results">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Company</th>
+          <th>Location</th>
+          <th>Posted</th>
+          <th>Link</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="pager">
+      <button id="prev">Prev</button>
+      <button id="next">Next</button>
+    </div>
+  </div>
+
+  <script src="/static/main.js"></script>
+</body>
+</html>

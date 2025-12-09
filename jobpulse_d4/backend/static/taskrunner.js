@@ -8,13 +8,34 @@ function logln(s) {
 }
 
 async function octoLogin() {
+  const username = $("username").value.trim();
+  const password = $("password").value.trim();
+
+  if (!username || !password) {
+    $("loginStatus").textContent = "Enter username and password";
+    logln("Login failed: Missing credentials");
+    return false;
+  }
+
   $("loginStatus").textContent = "Logging in...";
   try {
-    const r = await api("/login");
+    const r = await api("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
     const j = await r.json();
     if (r.ok && j.access_token) {
       $("loginStatus").textContent = "Logged in ✓ (token cached)";
       logln("Login OK");
+
+      // Cache credentials in localStorage
+      localStorage.setItem("octo_username", username);
+      localStorage.setItem("octo_password", password);
+
+      // Auto-load groups after successful login
+      await loadGroups();
+
       return true;
     } else {
       $("loginStatus").textContent = "Login failed";
@@ -26,6 +47,33 @@ async function octoLogin() {
     logln("Login error: " + e);
     return false;
   }
+}
+
+async function autoLogin() {
+  const username = localStorage.getItem("octo_username");
+  const password = localStorage.getItem("octo_password");
+
+  if (!username || !password) {
+    return false;
+  }
+
+  // Populate the input fields
+  $("username").value = username;
+  $("password").value = password;
+
+  // Attempt login
+  return await octoLogin();
+}
+
+function logout() {
+  localStorage.removeItem("octo_username");
+  localStorage.removeItem("octo_password");
+  $("username").value = "";
+  $("password").value = "";
+  $("loginStatus").textContent = "Logged out";
+  $("groupSelect").innerHTML = "";
+  $("tasksList").innerHTML = "";
+  logln("Logged out and cleared cache");
 }
 
 async function loadGroups() {
@@ -41,7 +89,7 @@ async function loadGroups() {
     (j.data || []).forEach(g => {
       const o = document.createElement("option");
       o.value = g.taskGroupId;
-      o.textContent = `${g.taskGroupName} (${g.taskGroupId})`;
+      o.textContent = `${g.taskGroupName}`;
       $("groupSelect").appendChild(o);
     });
     if (($("groupSelect").options || []).length > 0) {
@@ -68,7 +116,7 @@ async function loadTasks() {
       const cb = document.createElement("input");
       cb.type = "checkbox"; cb.value = t.taskId; cb.checked = true;
       const label = document.createElement("label");
-      label.textContent = `${t.taskName} (${t.taskId})`;
+      label.textContent = `${t.taskName}`;
       div.appendChild(cb);
       div.appendChild(label);
       box.appendChild(div);
@@ -157,7 +205,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("deselectAll").addEventListener("click", deselectAll);
   $("selectAll").addEventListener("click", selectAll);
 
-  // auto login & load on first paint (best-effort)
-  await octoLogin();
-  await loadGroups();
+  // Auto-login if credentials are cached
+  await autoLogin();
 });

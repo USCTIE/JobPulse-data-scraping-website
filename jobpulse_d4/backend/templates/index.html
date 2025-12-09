@@ -10,8 +10,11 @@
   <div class="container">
     <h1>JobPulse — Octoparse Task Runner</h1>
 
-    <div class="card">
-      <div class="row">
+    <div class="card" style="display: flex; width: 300px; align-items: center; justify-content: center; ">
+      <div class="row" style="display: flex; flex-direction: column; gap: 10px; width: 250px">
+        <h2>Octoparse Login</h2>
+        <input id="username" placeholder="Username">
+        <input id="password" placeholder="Password" type="password">
         <button id="loginBtn">Login to Octoparse</button>
         <span id="loginStatus">Not logged in</span>
       </div>

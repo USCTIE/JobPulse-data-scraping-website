@@ -4,6 +4,12 @@ JobPulse connects to **Octoparse** to list **Task Groups** and **Tasks**, lets y
 
 ---
 
+## Demo Video
+Watch the end‑to‑end demo here:  
+**https://drive.google.com/file/d/1EhJnizsDaYKmttWUfLa2IUb7MlRlENwt/view?usp=drive_link**
+
+---
+
 ## Table of Contents
 
 * [Features](#features)

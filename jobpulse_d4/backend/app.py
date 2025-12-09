@@ -23,8 +23,8 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 OCTOPARSE_API_TIER = "advanced"
 BASE_URL = "https://advancedapi.octoparse.com"
-USERNAME = os.getenv("OCTOPARSE_USERNAME")
-PASSWORD = os.getenv("OCTOPARSE_PASSWORD")
+USERNAME = None
+PASSWORD = None
 
 # Manage login token (YOUR WORKING VERSION)
 class TokenManager:
@@ -100,9 +100,21 @@ def home():
     return render_template("index.html")
 
 # --- Your existing Octoparse routes (kept as-is) ---
-@app.get("/login")
+@app.post("/login")
 def login():
-    """Obtain and cache a new Octoparse access token."""
+    """Obtain and cache a new Octoparse access token from request body."""
+    body = request.get_json() or {}
+    username = body.get("username")
+    password = body.get("password")
+
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
+
+    # Temporarily set credentials for this login attempt
+    global USERNAME, PASSWORD
+    USERNAME = username
+    PASSWORD = password
+
     err, status = token_mgr._fetch_with_password()
     if status != 200:
         return jsonify({"error": err}), status

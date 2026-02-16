@@ -18,3 +18,12 @@ a { color: #7aa2f7; }
 .logs { white-space: pre-wrap; background:#0b1016; padding:8px; border-radius:8px; max-height:260px; overflow:auto; }
 h2 { margin: 0 0 8px 0; }
 label { display:flex; gap:6px; align-items:center; }
+
+.jobs-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+.jobs-table-wrap table { margin: 0; }
+.jobs-table-wrap thead th { position: sticky; top: 0; background: #161b22; z-index: 1; box-shadow: 0 1px 0 #30363d; }

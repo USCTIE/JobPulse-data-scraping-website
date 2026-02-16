@@ -17,6 +17,7 @@ services:
     build: ./backend
     depends_on:
       - db
+      - redis
     env_file:
       - ./backend/.env
     environment:
@@ -24,6 +25,27 @@ services:
       DB_HOST: db
     ports:
       - "5000:5000"
+    volumes:
+      - ./backend:/app
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+
+  celery_worker:
+    build: ./backend
+    depends_on:
+      - db
+      - redis
+    env_file:
+      - ./backend/.env
+    environment:
+      FLASK_ENV: development
+      DB_HOST: db
+      REDIS_URL: redis://redis:6379/0
+    command: ["celery", "-A", "celery_app.celery", "worker", "--loglevel=INFO"]
     volumes:
       - ./backend:/app
 

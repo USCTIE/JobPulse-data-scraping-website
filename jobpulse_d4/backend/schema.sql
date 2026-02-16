@@ -8,6 +8,7 @@ USE jobpulse;
 SET FOREIGN_KEY_CHECKS = 0;
 
 DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS exports;
 DROP TABLE IF EXISTS sessions;
 DROP TABLE IF EXISTS users;
 
@@ -58,5 +59,20 @@ CREATE INDEX idx_jobs_title ON jobs (job_title);
 CREATE INDEX idx_jobs_location ON jobs (job_location);
 CREATE INDEX idx_jobs_post_time ON jobs (post_time);
 CREATE INDEX idx_jobs_company ON jobs (company);
+
+CREATE TABLE exports (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  task_group_id BIGINT,
+  task_group_name VARCHAR(255),
+  selected_task_ids TEXT,
+  task_names TEXT,
+  status ENUM('queued','running','done','failed') NOT NULL DEFAULT 'queued',
+  progress VARCHAR(255),
+  error TEXT,
+  file_name VARCHAR(255),
+  file_path VARCHAR(500),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 1;

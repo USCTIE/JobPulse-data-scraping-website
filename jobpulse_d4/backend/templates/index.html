@@ -43,6 +43,29 @@
       <h2>Logs</h2>
       <pre id="logs" class="logs"></pre>
     </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <h2>Exports (all jobs)</h2>
+      <div id="jobsMeta" style="font-size: 12px; opacity: 0.8; margin-bottom: 6px;"></div>
+      <div class="jobs-table-wrap">
+        <table id="jobsTable">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Task group</th>
+              <th>Task name(s)</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Created</th>
+              <th>File</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          <tbody id="jobsBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script src="/static/taskrunner.js"></script>

@@ -1,4 +1,4 @@
-import os, pymysql
+import os, json, pymysql
 
 def get_conn():
     return pymysql.connect(
@@ -55,3 +55,55 @@ def upsert_job(cur, j):
         j.get("min_pay"),
         j.get("max_pay"),
     ))
+
+def create_export_job(cur, task_group_id, selected_task_ids, task_group_name=None, task_names=None):
+    # Insert a new export job row and return its id, `selected_task_ids` and `task_names` should be lists, Json is stored as text
+    ids_json = json.dumps(selected_task_ids or [])
+    names_json = json.dumps(task_names or []) if task_names is not None else None
+    sql = """
+    INSERT INTO exports (task_group_id, task_group_name, selected_task_ids, task_names, status)
+    VALUES (%s, %s, %s, %s, 'queued')
+    """
+    cur.execute(sql, (task_group_id, task_group_name or None, ids_json, names_json))
+    return cur.lastrowid
+
+
+def update_export_job_status(cur, job_id, status=None, progress=None,
+                             error=None, file_name=None, file_path=None):
+    # Partial update of an export job row
+    fields = []
+    args = []
+    if status is not None:
+        fields.append("status=%s")
+        args.append(status)
+    if progress is not None:
+        fields.append("progress=%s")
+        args.append(progress)
+    if error is not None:
+        fields.append("error=%s")
+        args.append(error)
+    if file_name is not None:
+        fields.append("file_name=%s")
+        args.append(file_name)
+    if file_path is not None:
+        fields.append("file_path=%s")
+        args.append(file_path)
+    if not fields:
+        return
+    sql = f"UPDATE exports SET {', '.join(fields)} WHERE id=%s"
+    args.append(job_id)
+    cur.execute(sql, args)
+
+
+def get_export_job(cur, job_id):
+    cur.execute("SELECT * FROM exports WHERE id=%s", (job_id,))
+    return cur.fetchone()
+
+
+def list_export_jobs(cur, limit=100):
+    # Return most recent export jobs (global view)
+    cur.execute(
+        "SELECT * FROM exports ORDER BY created_at DESC LIMIT %s",
+        (int(limit),),
+    )
+    return cur.fetchall()

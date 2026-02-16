@@ -6,3 +6,5 @@ pymysql==1.1.1
 cryptography
 openpyxl==3.1.5
 gunicorn==21.2.0
+celery==5.3.6
+redis==5.0.1

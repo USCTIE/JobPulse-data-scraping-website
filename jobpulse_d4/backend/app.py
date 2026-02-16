@@ -15,6 +15,15 @@ from flask import Flask, request, jsonify, Response, render_template
 from dotenv import load_dotenv
 from flask_cors import CORS
 
+from celery_app import celery
+from db import (
+    get_conn,
+    create_export_job,
+    update_export_job_status,
+    get_export_job,
+    list_export_jobs,
+)
+
 # Load .env variables
 load_dotenv()
 
@@ -23,8 +32,13 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 OCTOPARSE_API_TIER = "advanced"
 BASE_URL = "https://advancedapi.octoparse.com"
-USERNAME = None
-PASSWORD = None
+# Default to env-based credentials
+USERNAME = os.getenv("OCTOPARSE_USERNAME")
+PASSWORD = os.getenv("OCTOPARSE_PASSWORD")
+
+# Directory where background exports are stored.
+EXPORTS_DIR = os.getenv("EXPORTS_DIR", "exports")
+os.makedirs(EXPORTS_DIR, exist_ok=True)
 
 # Manage login token (YOUR WORKING VERSION)
 class TokenManager:
@@ -424,35 +438,38 @@ def wait_for_tasks(task_ids):
         time.sleep(5)  # respect 1 request / 5 seconds limit
 
 
-@app.post("/octo/run-all")
-def octo_run_all():
+def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=None):
     """
-    Body JSON: { "taskGroupId": 12345, "offset": 0, "size": 100, "waitSeconds": 20, "selectedTaskIds": [..](optional) }
-    Action: Start tasks, poll briefly (best-effort), retrieve data by offset, aggregate and return Excel.
-    """
-    body = request.get_json() or {}
-    task_group_id = body.get("taskGroupId")
-    if not task_group_id:
-        return jsonify({"error": "taskGroupId is required"}), 400
+    Core orchestration for running Octoparse tasks and building an Excel workbook.
 
+    Returns a tuple of (Workbook, tasks_list). Raises on errors so callers
+    (Flask route or Celery task) can convert to appropriate responses.
+    """
     offset = 0
     size = 1000
-    selected_ids = body.get("selectedTaskIds")  # optional list
+    # Normalize to strings so comparison works whether API returns taskId as str or int
+    selected_ids_set = {str(x) for x in (selected_task_ids or [])}
+
+    if progress_cb:
+        progress_cb("Fetching tasks for group")
 
     # 1) fetch tasks in the group
     tasks_res = _octo_get("/api/Task", params={"taskGroupId": task_group_id})
     if tasks_res.status_code != 200:
-        return _handle_response(tasks_res)
+        raise RuntimeError(f"Failed to fetch tasks: {tasks_res.text}")
     tasks = tasks_res.json().get("data", []) or []
-    if selected_ids:
-        tasks = [t for t in tasks if t.get("taskId") in set(selected_ids)]
+    if selected_ids_set:
+        tasks = [t for t in tasks if str(t.get("taskId") or "") in selected_ids_set]
 
     if not tasks:
-        return jsonify({"error": "No tasks found for this group (or selection)."}), 404
+        raise RuntimeError("No tasks found for this group (or selection).")
 
     task_ids = [t["taskId"] for t in tasks if t.get("taskId")]
 
     # 2) start each task (best-effort; if already running/completed, Octoparse typically no-ops)
+    if progress_cb:
+        progress_cb(f"Starting {len(task_ids)} tasks")
+
     for tid in task_ids:
         try:
             _octo_post("/api/task/RemoveDataByTaskId", params={"taskId": tid})
@@ -461,14 +478,19 @@ def octo_run_all():
         except Exception as e:
             print("StartTask error:", tid, e)
 
-    print("Polling until all tasks are complete...")
+    if progress_cb:
+        progress_cb("Waiting for tasks to complete")
+
     wait_for_tasks(task_ids)
 
-    # 4) fetch data per task by offset paging
-    #    We'll build an Excel workbook with one sheet per taskName.
+    # Allow Octoparse a moment to finalize data before we request it
+    time.sleep(10)
+
+    # 3) fetch data per task by offset paging and build Excel
     wb = Workbook()
     # openpyxl creates a default sheet; we will reuse it for the first task
     default_sheet_used = False
+    total_tasks = len(tasks)
 
     for idx, t in enumerate(tasks):
         tid = t.get("taskId")
@@ -480,22 +502,41 @@ def octo_run_all():
         safe_title = safe_title[:31]
 
         # accumulate rows (dicts) for this task
+        # Octoparse: use the offset *returned* in the response for next request, not manual increment
         all_rows = []
         ofs = offset
         while True:
-            data_res = _octo_get("/api/alldata/GetDataOfTaskByOffset", params={"taskId": tid, "offset": ofs, "size": size})
+            data_res = _octo_get(
+                "/api/alldata/GetDataOfTaskByOffset",
+                params={"taskId": tid, "offset": ofs, "size": size},
+            )
             if data_res.status_code != 200:
                 print("Data fetch error:", tid, data_res.text)
                 break
             payload = data_res.json() or {}
-            data = payload.get("data", {})
-            items = data.get("dataList", []) or []
+            data = payload.get("data")
+            if data is None:
+                data = payload
+            if isinstance(data, list):
+                items = data
+            else:
+                items = (data or {}).get("dataList") or (data or {}).get("list") or (data or {}).get("items") or []
             if not items:
                 break
             all_rows.extend(items)
-            ofs += len(items)
+            # Use offset from response for next page (Octoparse requires this); fallback to offset + len(items)
+            next_ofs = payload.get("offset")
+            if next_ofs is None and isinstance(data, dict):
+                next_ofs = data.get("offset")
+            if next_ofs is not None and isinstance(next_ofs, (int, float)):
+                ofs = int(next_ofs)
+            else:
+                ofs = ofs + len(items)
             if len(items) < size:
                 break  # reached the end
+
+        if not all_rows:
+            print(f"Task {tid} ({tname}): no rows returned")
 
         # write to sheet
         if not default_sheet_used:
@@ -508,14 +549,40 @@ def octo_run_all():
         # columns / headers: union of keys found (simple approach)
         headers = set()
         for r in all_rows:
-            headers.update(r.keys())
+            headers.update(r.keys() if isinstance(r, dict) else [])
         headers = list(headers) if headers else ["id", "title", "companyName", "location", "jobUrl"]
         ws.append(headers)
 
         for r in all_rows:
+            if not isinstance(r, dict):
+                continue
             ws.append([r.get(h, "") for h in headers])
 
-    # 5) stream workbook as an .xlsx download
+        if progress_cb:
+            progress_cb(f"Fetched data for {idx+1}/{total_tasks} tasks")
+
+    return wb, tasks
+
+
+@app.post("/octo/run-all")
+def octo_run_all():
+    """
+    Synchronous variant kept for backward compatibility.
+    Body JSON: { "taskGroupId": 12345, "selectedTaskIds": [..](optional) }
+    """
+    body = request.get_json() or {}
+    task_group_id = body.get("taskGroupId")
+    if not task_group_id:
+        return jsonify({"error": "taskGroupId is required"}), 400
+
+    selected_ids = body.get("selectedTaskIds")  # optional list
+
+    try:
+        wb, _ = build_octoparse_workbook(task_group_id, selected_ids)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    # stream workbook as an .xlsx download
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     try:
         wb.save(tmp.name)
@@ -523,15 +590,179 @@ def octo_run_all():
         tmp.seek(0)
         ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         filename = f"jobpulse_octoparse_tasks_{task_group_id}_{ts}.xlsx"
-        return send_file(tmp.name,
-                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                         as_attachment=True,
-                         download_name=filename)
+        return send_file(
+            tmp.name,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename,
+        )
     finally:
         try:
             tmp.close()
-        except:
+        except Exception:
             pass
+
+
+@celery.task(name="run_export_task")
+def run_export_task(job_id, task_group_id, selected_task_ids):
+    """
+    Celery task that runs the Octoparse export and writes the Excel file
+    into EXPORTS_DIR, updating the exports table as it goes.
+    """
+    conn = get_conn()
+
+    def progress_cb(message):
+        with conn.cursor() as cur:
+            update_export_job_status(cur, job_id, progress=message, status="running")
+
+    try:
+        progress_cb("Starting export job")
+        wb, _ = build_octoparse_workbook(task_group_id, selected_task_ids, progress_cb=progress_cb)
+
+        ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        filename = f"jobpulse_octoparse_tasks_{task_group_id}_{job_id}_{ts}.xlsx"
+        file_path = os.path.join(EXPORTS_DIR, filename)
+        wb.save(file_path)
+
+        with conn.cursor() as cur:
+            update_export_job_status(
+                cur,
+                job_id,
+                status="done",
+                progress="Completed",
+                file_name=filename,
+                file_path=file_path,
+            )
+    except Exception as e:
+        with conn.cursor() as cur:
+            update_export_job_status(
+                cur,
+                job_id,
+                status="failed",
+                progress="Failed",
+                error=str(e),
+            )
+        raise
+    finally:
+        conn.close()
+
+
+@app.post("/jobs")
+def create_job():
+    """
+    Create a new export job and enqueue the Celery task.
+    Body: { "taskGroupId": 12345, "taskGroupName": "...", "selectedTaskIds": [...], "selectedTaskNames": [...] }
+    """
+    body = request.get_json() or {}
+    task_group_id = body.get("taskGroupId")
+    if not task_group_id:
+        return jsonify({"error": "taskGroupId is required"}), 400
+
+    selected_ids = body.get("selectedTaskIds") or []
+    task_group_name = body.get("taskGroupName") or None
+    selected_task_names = body.get("selectedTaskNames") or []
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            job_id = create_export_job(
+                cur, task_group_id, selected_ids,
+                task_group_name=task_group_name,
+                task_names=selected_task_names if selected_task_names else None,
+            )
+        # enqueue background work
+        run_export_task.delay(job_id, task_group_id, selected_ids)
+    finally:
+        conn.close()
+
+    return jsonify({"jobId": int(job_id)})
+
+
+@app.get("/jobs")
+def list_jobs():
+    """
+    List recent export jobs for the global table.
+    """
+    limit = int(request.args.get("limit", 100))
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            jobs = list_export_jobs(cur, limit=limit)
+    finally:
+        conn.close()
+
+    # Decode JSON fields for convenience
+    for j in jobs:
+        try:
+            j["selected_task_ids"] = json.loads(j.get("selected_task_ids") or "[]")
+        except Exception:
+            j["selected_task_ids"] = []
+        try:
+            raw = j.get("task_names")
+            j["task_names"] = json.loads(raw) if isinstance(raw, str) and raw else (raw or [])
+        except Exception:
+            j["task_names"] = []
+
+    return jsonify({"items": jobs})
+
+
+@app.get("/jobs/<int:job_id>")
+def get_job(job_id):
+    """
+    Fetch a single export job (for polling).
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            job = get_export_job(cur, job_id)
+    finally:
+        conn.close()
+
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    try:
+        job["selected_task_ids"] = json.loads(job.get("selected_task_ids") or "[]")
+    except Exception:
+        job["selected_task_ids"] = []
+    try:
+        raw = job.get("task_names")
+        job["task_names"] = json.loads(raw) if isinstance(raw, str) and raw else (raw or [])
+    except Exception:
+        job["task_names"] = []
+
+    return jsonify(job)
+
+
+@app.get("/jobs/<int:job_id>/download")
+def download_job(job_id):
+    """
+    Download the Excel file for a completed job.
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            job = get_export_job(cur, job_id)
+    finally:
+        conn.close()
+
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    if job.get("status") != "done":
+        return jsonify({"error": f"Job status is {job.get('status')}, not done"}), 400
+
+    file_path = job.get("file_path")
+    file_name = job.get("file_name") or os.path.basename(file_path or "")
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({"error": "Export file not found"}), 404
+
+    return send_file(
+        file_path,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=file_name,
+    )
 
 
 if __name__ == "__main__":

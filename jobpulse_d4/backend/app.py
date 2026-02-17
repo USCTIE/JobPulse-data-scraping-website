@@ -388,11 +388,34 @@ def search_live():
     return jsonify({"mode":"live", "received": len(items), "items": items})
 
 def _octo_get(path, params=None):
-    res = requests.get(f"{BASE_URL}{path}", params=params, headers=token_mgr.headers(), timeout=60)
+    url = f"{BASE_URL}{path}"
+    print(f"[OCTO GET] URL: {url}")
+    print(f"[OCTO GET] Params: {params}")
+    res = requests.get(url, params=params, headers=token_mgr.headers(), timeout=60)
+    print(f"[OCTO GET] Status: {res.status_code}")
+    if res.status_code != 200:
+        print(f"[OCTO GET ERROR] Response: {res.text}")
+    else:
+        try:
+            print(f"[OCTO GET] Response preview: {str(res.json())[:500]}...")
+        except Exception:
+            print(f"[OCTO GET] Response (non-JSON): {res.text[:500]}...")
     return res
 
 def _octo_post(path, params=None, json_body=None):
-    res = requests.post(f"{BASE_URL}{path}", params=params, json=json_body, headers=token_mgr.headers(), timeout=60)
+    url = f"{BASE_URL}{path}"
+    print(f"[OCTO POST] URL: {url}")
+    print(f"[OCTO POST] Params: {params}")
+    print(f"[OCTO POST] Body: {json_body}")
+    res = requests.post(url, params=params, json=json_body, headers=token_mgr.headers(), timeout=60)
+    print(f"[OCTO POST] Status: {res.status_code}")
+    if res.status_code != 200:
+        print(f"[OCTO POST ERROR] Response: {res.text}")
+    else:
+        try:
+            print(f"[OCTO POST] Response: {res.json()}")
+        except Exception:
+            print(f"[OCTO POST] Response (non-JSON): {res.text}")
     return res
 
 @app.get("/octo/task-groups")
@@ -413,28 +436,46 @@ def wait_for_tasks(task_ids):
     import time, requests
 
     url = "https://openapi.octoparse.com/cloudextraction/statuses/v2"
+    print(f"[WAIT_TASKS] Monitoring tasks: {task_ids}")
 
+    iteration = 0
     while True:
+        iteration += 1
         headers = {
             "Authorization": f"Bearer {token_mgr.get_token()}",
             "Content-Type": "application/json"
         }
 
+        print(f"\n[WAIT_TASKS] Iteration {iteration} - Checking status...")
         res = requests.post(url, json={"taskIds": task_ids}, headers=headers)
+        print(f"[WAIT_TASKS] Status check HTTP {res.status_code}")
+        
         if res.status_code != 200:
-            print("Status check failed:", res.text)
+            print(f"[WAIT_TASKS ERROR] Status check failed: {res.text}")
             time.sleep(5)
             continue
 
-        data = res.json().get("data", [])
-        statuses = {d["taskId"]: d["status"] for d in data}
-        print(statuses)
+        try:
+            response_data = res.json()
+            print(f"[WAIT_TASKS] Full response: {json.dumps(response_data, indent=2)}")
+            data = response_data.get("data", [])
+            statuses = {d["taskId"]: d["status"] for d in data}
+            
+            print(f"[WAIT_TASKS] Current statuses:")
+            for tid, status in statuses.items():
+                print(f"  - Task {tid}: {status}")
+        except Exception as e:
+            print(f"[WAIT_TASKS ERROR] Failed to parse response: {e}")
+            print(f"[WAIT_TASKS ERROR] Raw response: {res.text}")
+            time.sleep(5)
+            continue
 
         # Stop when all tasks are done
         if all(s in ("Finished", "Stopped") for s in statuses.values()):
-            print("✅ All tasks finished.")
+            print("✅ [WAIT_TASKS] All tasks finished.")
             break
 
+        print(f"[WAIT_TASKS] Waiting 5 seconds before next check...")
         time.sleep(5)  # respect 1 request / 5 seconds limit
 
 
@@ -465,6 +506,8 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
         raise RuntimeError("No tasks found for this group (or selection).")
 
     task_ids = [t["taskId"] for t in tasks if t.get("taskId")]
+    tasks_not_ready = []
+    tasks_started = []
 
     # 2) start each task (best-effort; if already running/completed, Octoparse typically no-ops)
     if progress_cb:
@@ -472,16 +515,92 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
 
     for tid in task_ids:
         try:
-            _octo_post("/api/task/RemoveDataByTaskId", params={"taskId": tid})
+            print(f"\n[BUILD_WORKBOOK] Processing task {tid}")
+            print(f"[BUILD_WORKBOOK] Step 1: Removing old data...")
+            remove_res = _octo_post("/api/task/RemoveDataByTaskId", params={"taskId": tid})
+            if remove_res.status_code == 200:
+                try:
+                    remove_data = remove_res.json()
+                    print(f"[BUILD_WORKBOOK] ✓ Data removed: {remove_data}")
+                except:
+                    print(f"[BUILD_WORKBOOK] ✓ Data removed successfully")
+            else:
+                print(f"[BUILD_WORKBOOK] ⚠ Remove data returned {remove_res.status_code}")
+            
+            print(f"[BUILD_WORKBOOK] Waiting 2 seconds...")
             time.sleep(2)  # Give Octoparse time to commit the clear
-            _octo_post("/api/task/StartTask", params={"taskId": tid})
+            
+            print(f"[BUILD_WORKBOOK] Step 2: Starting task...")
+            start_res = _octo_post("/api/task/StartTask", params={"taskId": tid})
+            if start_res.status_code == 200:
+                try:
+                    start_data = start_res.json()
+                    print(f"[BUILD_WORKBOOK] ✓ Task start response: {start_data}")
+                    error_code = start_data.get("error")
+                    if error_code:
+                        error_desc = start_data.get("error_Description", "Unknown error")
+                        print(f"[BUILD_WORKBOOK] ❌ ERROR: {error_code} - {error_desc}")
+                        
+                        if error_code == "task_not_ready":
+                            print(f"[BUILD_WORKBOOK] ⚠️ Task needs configuration in Octoparse UI before it can run")
+                            tasks_not_ready.append(tid)
+                        else:
+                            print(f"[BUILD_WORKBOOK] ⚠️ Skipping task due to error: {error_code}")
+                            tasks_not_ready.append(tid)
+                    else:
+                        tasks_started.append(tid)
+                        print(f"[BUILD_WORKBOOK] ✓ Task started successfully")
+                except:
+                    print(f"[BUILD_WORKBOOK] ✓ Task started (non-JSON response)")
+                    tasks_started.append(tid)
+            else:
+                print(f"[BUILD_WORKBOOK] ❌ Start task FAILED with status {start_res.status_code}")
+                print(f"[BUILD_WORKBOOK] Error details: {start_res.text}")
+                tasks_not_ready.append(tid)
+                
+            # Verify task was actually started by checking its status immediately
+            print(f"[BUILD_WORKBOOK] Step 3: Verifying task status...")
+            import requests as req
+            verify_url = "https://openapi.octoparse.com/cloudextraction/statuses/v2"
+            verify_headers = {
+                "Authorization": f"Bearer {token_mgr.get_token()}",
+                "Content-Type": "application/json"
+            }
+            verify_res = req.post(verify_url, json={"taskIds": [tid]}, headers=verify_headers)
+            if verify_res.status_code == 200:
+                verify_data = verify_res.json()
+                task_status = verify_data.get("data", [{}])[0].get("status", "Unknown")
+                print(f"[BUILD_WORKBOOK] Current task status: {task_status}")
+                if task_status == "Unexecuted":
+                    print(f"[BUILD_WORKBOOK] ⚠⚠⚠ WARNING: Task did not start! Still Unexecuted after StartTask call")
+            
         except Exception as e:
-            print("StartTask error:", tid, e)
+            print(f"[BUILD_WORKBOOK ERROR] Failed to start task {tid}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # Summary of task start attempts
+    print(f"\n[BUILD_WORKBOOK] ========== START SUMMARY ==========")
+    print(f"[BUILD_WORKBOOK] Total tasks: {len(task_ids)}")
+    print(f"[BUILD_WORKBOOK] Successfully started: {len(tasks_started)}")
+    print(f"[BUILD_WORKBOOK] Not ready/Failed: {len(tasks_not_ready)}")
+    if tasks_not_ready:
+        print(f"[BUILD_WORKBOOK] Tasks not ready: {tasks_not_ready}")
+        print(f"[BUILD_WORKBOOK] ⚠️ These tasks need to be configured in Octoparse UI first!")
+    print(f"[BUILD_WORKBOOK] =====================================\n")
+
+    # Only wait for tasks that actually started
+    if not tasks_started:
+        raise RuntimeError(
+            f"None of the {len(task_ids)} tasks could be started. "
+            f"All tasks show 'task_not_ready' error. "
+            f"Please configure these tasks in the Octoparse UI first before running them via API."
+        )
 
     if progress_cb:
-        progress_cb("Waiting for tasks to complete")
+        progress_cb(f"Waiting for {len(tasks_started)} started tasks to complete")
 
-    wait_for_tasks(task_ids)
+    wait_for_tasks(tasks_started)
 
     # Allow Octoparse a moment to finalize data before we request it
     time.sleep(10)

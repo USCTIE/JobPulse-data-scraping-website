@@ -22,6 +22,8 @@ from db import (
     update_export_job_status,
     get_export_job,
     list_export_jobs,
+    get_local_backup_task_ids,
+    add_local_backup_task_id,
 )
 
 # Load .env variables
@@ -35,6 +37,7 @@ BASE_URL = "https://advancedapi.octoparse.com"
 # Default to env-based credentials
 USERNAME = os.getenv("OCTOPARSE_USERNAME")
 PASSWORD = os.getenv("OCTOPARSE_PASSWORD")
+LINKEDIN_LOCAL_TASK_ID = "36014d64-f07c-4c11-a4fa-dcd59c7094e4"
 
 # Directory where background exports are stored.
 EXPORTS_DIR = os.getenv("EXPORTS_DIR", "exports")
@@ -113,7 +116,6 @@ def _handle_response(res: requests.Response):
 def home():
     return render_template("index.html")
 
-# --- Your existing Octoparse routes (kept as-is) ---
 @app.post("/login")
 def login():
     """Obtain and cache a new Octoparse access token from request body."""
@@ -395,6 +397,7 @@ def _octo_post(path, params=None, json_body=None):
     res = requests.post(f"{BASE_URL}{path}", params=params, json=json_body, headers=token_mgr.headers(), timeout=60)
     return res
 
+
 @app.get("/octo/task-groups")
 def octo_task_groups():
     # alias of /task-groups but namespaced; front-end will use this
@@ -405,14 +408,23 @@ def octo_tasks():
     # alias of /tasks but namespaced; front-end will use this
     return list_tasks()
 
+
 def wait_for_tasks(task_ids):
     """
-    Wait until all Octoparse tasks reach 'Finished' or 'Stopped',
-    using the /cloudextraction/statuses/v2 endpoint.
+    Wait until all Octoparse tasks reach 'Finished', 'Stopped', or (for local-only
+    tasks) 'Unexecuted' 3 times in a row. Tasks seen as Unexecuted 3 times are
+    added to local_backup_tasks so next run skips start/wait.
     """
     import time, requests
 
     url = "https://openapi.octoparse.com/cloudextraction/statuses/v2"
+
+    TERMINAL = {"Finished", "Stopped"}
+    UNEXECUTED_THRESHOLD = 3
+    seen_active = set()
+    unexecuted_count = {}
+    start_time = time.time()
+    STALE_GUARD_TIMEOUT = 60
 
     while True:
         headers = {
@@ -430,12 +442,53 @@ def wait_for_tasks(task_ids):
         statuses = {d["taskId"]: d["status"] for d in data}
         print(statuses)
 
-        # Stop when all tasks are done
-        if all(s in ("Finished", "Stopped") for s in statuses.values()):
+        elapsed = time.time() - start_time
+        guard_expired = elapsed > STALE_GUARD_TIMEOUT
+
+        for tid, status in statuses.items():
+            if status not in TERMINAL:
+                seen_active.add(tid)
+            tid_str = str(tid)
+            if status == "Unexecuted":
+                unexecuted_count[tid_str] = unexecuted_count.get(tid_str, 0) + 1
+                if unexecuted_count[tid_str] == UNEXECUTED_THRESHOLD:
+                    conn = None
+                    try:
+                        conn = get_conn()
+                        with conn.cursor() as cur:
+                            add_local_backup_task_id(cur, tid)
+                    except Exception as e:
+                        print(f"Failed to add local_backup_task_id {tid}:", e)
+                    finally:
+                        if conn:
+                            conn.close()
+            else:
+                unexecuted_count[tid_str] = 0
+
+        all_done = True
+        for tid in task_ids:
+            status = statuses.get(tid)
+            if status is None:
+                all_done = False
+                break
+            if status in TERMINAL:
+                if tid in seen_active or guard_expired:
+                    continue
+                else:
+                    print(f"⚠️  Task {tid} reports '{status}' but hasn't been seen active yet — treating as stale")
+                    all_done = False
+                    break
+            elif status == "Unexecuted" and unexecuted_count.get(str(tid), 0) >= UNEXECUTED_THRESHOLD:
+                continue
+            else:
+                all_done = False
+                break
+
+        if all_done:
             print("✅ All tasks finished.")
             break
 
-        time.sleep(5)  # respect 1 request / 5 seconds limit
+        time.sleep(5)
 
 
 def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=None):
@@ -466,11 +519,25 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
 
     task_ids = [t["taskId"] for t in tasks if t.get("taskId")]
 
-    # 2) start each task (best-effort; if already running/completed, Octoparse typically no-ops)
+    # Local-backup task IDs: skip start/wait, fetch by offset only
+    try:
+        conn = get_conn()
+        with conn.cursor() as cur:
+            local_backup_ids = get_local_backup_task_ids(cur)
+        conn.close()
+    except Exception as e:
+        print("Failed to load local_backup_task_ids:", e)
+        local_backup_ids = set()
+    local_backup_ids = local_backup_ids | {str(LINKEDIN_LOCAL_TASK_ID)} if LINKEDIN_LOCAL_TASK_ID else local_backup_ids
+
+    # 2) start each task (skip tasks in local_backup_ids — they are run locally and backed up to cloud)
+    wait_ids = [tid for tid in task_ids if str(tid) not in local_backup_ids]
     if progress_cb:
-        progress_cb(f"Starting {len(task_ids)} tasks")
+        progress_cb(f"Starting {len(wait_ids)} tasks")
 
     for tid in task_ids:
+        if str(tid) in local_backup_ids:
+            continue
         try:
             _octo_post("/api/task/RemoveDataByTaskId", params={"taskId": tid})
             time.sleep(2)  # Give Octoparse time to commit the clear
@@ -481,39 +548,48 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
     if progress_cb:
         progress_cb("Waiting for tasks to complete")
 
-    wait_for_tasks(task_ids)
-
-    # Allow Octoparse a moment to finalize data before we request it
-    time.sleep(10)
+    if wait_ids:
+        wait_for_tasks(wait_ids)
 
     # 3) fetch data per task by offset paging and build Excel
+    # Exponential backoff constants for data-readiness retries
+    MAX_DATA_READY_RETRIES = 8
+    INITIAL_BACKOFF_SECS = 5
+    MAX_BACKOFF_SECS = 60
+
     wb = Workbook()
-    # openpyxl creates a default sheet; we will reuse it for the first task
     default_sheet_used = False
     total_tasks = len(tasks)
 
     for idx, t in enumerate(tasks):
         tid = t.get("taskId")
         tname = t.get("taskName") or f"Task_{idx+1}"
-        # ensure a safe sheet title (max 31 chars, no []:*?/ etc.)
         safe_title = "".join(c for c in tname if c not in '[]:*?/\\').strip()
         if len(safe_title) == 0:
             safe_title = f"Task_{idx+1}"
         safe_title = safe_title[:31]
 
-        # accumulate rows (dicts) for this task
-        # Octoparse: use the offset *returned* in the response for next request, not manual increment
         all_rows = []
         ofs = offset
+        backoff_secs = INITIAL_BACKOFF_SECS
+        retries_left = MAX_DATA_READY_RETRIES
+
         while True:
             data_res = _octo_get(
                 "/api/alldata/GetDataOfTaskByOffset",
                 params={"taskId": tid, "offset": ofs, "size": size},
             )
             if data_res.status_code != 200:
-                print("Data fetch error:", tid, data_res.text)
+                print(f"[GetData] taskId={tid} offset={ofs} status={data_res.status_code} body={data_res.text[:200]}")
                 break
             payload = data_res.json() or {}
+            if not payload:
+                print(f"[GetData] taskId={tid} offset={ofs} empty JSON body")
+                break
+            # Advanced API can return 200 with error/error_Description in body
+            if payload.get("error") and payload.get("error") != "success":
+                print(f"[GetData] taskId={tid} offset={ofs} API error: {payload.get('error')} - {payload.get('error_Description', '')}")
+                break
             data = payload.get("data")
             if data is None:
                 data = payload
@@ -521,10 +597,32 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
                 items = data
             else:
                 items = (data or {}).get("dataList") or (data or {}).get("list") or (data or {}).get("items") or []
+
             if not items:
+                data_total = (data or {}).get("total") if isinstance(data, dict) else None
+                data_rest = (data or {}).get("restTotal") if isinstance(data, dict) else None
+
+                # First page empty → data likely not finalized yet; retry with exponential backoff
+                if ofs == 0 and retries_left > 0:
+                    retries_left -= 1
+                    print(f"[GetData] taskId={tid} data not ready "
+                          f"(total={data_total}, restTotal={data_rest}), "
+                          f"retrying in {backoff_secs}s ({retries_left} retries left)")
+                    if progress_cb:
+                        progress_cb(f"Waiting for data — {tname} (retry in {backoff_secs}s, {retries_left} left)")
+                    time.sleep(backoff_secs)
+                    backoff_secs = min(backoff_secs * 2, MAX_BACKOFF_SECS)
+                    continue
+
+                # Exhausted retries or not the first page — give up on this task
+                print(f"[GetData] taskId={tid} offset={ofs} — no data returned "
+                      f"(total={data_total}, restTotal={data_rest})")
+                if isinstance(data, dict):
+                    print(f"[GetData] taskId={tid} data keys={list(data.keys())}")
                 break
+
+            # Data arrived — collect rows and paginate
             all_rows.extend(items)
-            # Use offset from response for next page (Octoparse requires this); fallback to offset + len(items)
             next_ofs = payload.get("offset")
             if next_ofs is None and isinstance(data, dict):
                 next_ofs = data.get("offset")
@@ -533,7 +631,7 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
             else:
                 ofs = ofs + len(items)
             if len(items) < size:
-                break  # reached the end
+                break
 
         if not all_rows:
             print(f"Task {tid} ({tname}): no rows returned")

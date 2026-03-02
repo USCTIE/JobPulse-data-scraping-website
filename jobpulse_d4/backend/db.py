@@ -107,3 +107,18 @@ def list_export_jobs(cur, limit=100):
         (int(limit),),
     )
     return cur.fetchall()
+
+
+def get_local_backup_task_ids(cur):
+    # """Return set of task_id strings for tasks that are local backup only
+    cur.execute("SELECT task_id FROM local_backup_tasks")
+    rows = cur.fetchall()
+    return {str(r["task_id"]) for r in rows} if rows else set()
+
+
+def add_local_backup_task_id(cur, task_id):
+    # Add a task ID to local_backup_tasks
+    cur.execute(
+        "INSERT IGNORE INTO local_backup_tasks (task_id) VALUES (%s)",
+        (str(task_id),),
+    )

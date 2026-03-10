@@ -320,126 +320,153 @@ function renderJobsTableRow(job) {
   }
 }
 
-const LOGIN_TEMPLATE_COLUMN_ORDER = [
-  "id", "Title", "Company", "Location", "Salary", "Keyword",
-  "scrape_date", "Date", "Posted_time", "About_the_job",
-  "Input_URL", "Current_Page_URL", "Title_URL", "Company_URL",
-  "Result_count_for_reference_only", "Current_Page", "Image",
-  "People_applied", "Job_preference_1", "Job_preference_2",
-  "Job_preference_3", "Job_preference_4", "Company_follower",
-  "Company_size", "Count_of_employee_onLinkedIn", "Company_Intro",
-  "created_at"
-];
+// --- Login Template Data ---
+const LT_COLUMNS = ["scrape_date", "Title", "Company", "Location", "Salary", "Keyword", "Date", "Posted_time"];
+const LT_PAGE_SIZE = 100;
+let ltCurrentPage = 1;
+let ltTotal = 0;
 
-function orderLoginTemplateKeys(rawKeys) {
-  const ordered = [];
-  const set = new Set(rawKeys);
-  for (const k of LOGIN_TEMPLATE_COLUMN_ORDER) {
-    if (set.has(k)) { ordered.push(k); set.delete(k); }
-  }
-  for (const k of rawKeys) {
-    if (set.has(k)) ordered.push(k);
-  }
-  return ordered;
+function ltFormatDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
-function shortenForDisplay(str, maxLen) {
-  if (str == null || str === "") return "";
-  const s = String(str);
-  if (s.length <= maxLen) return s;
-  return s.slice(0, maxLen) + "…";
+function ltSetDefaultDates() {
+  const today = new Date();
+  const thirtyAgo = new Date();
+  thirtyAgo.setDate(today.getDate() - 30);
+  $("ltEndDate").value = ltFormatDate(today);
+  $("ltStartDate").value = ltFormatDate(thirtyAgo);
 }
 
-const LOGIN_TEMPLATE_PAGE_SIZE = 100;
-let loginTemplateCurrentPage = 1;
-let loginTemplateTotal = 0;
+function ltBuildUrl(page) {
+  const start = $("ltStartDate").value;
+  const end = $("ltEndDate").value;
+  let url = `/login-template-data?page=${page}&page_size=${LT_PAGE_SIZE}`;
+  if (start) url += `&start_date=${encodeURIComponent(start)}`;
+  if (end)   url += `&end_date=${encodeURIComponent(end)}`;
+  return url;
+}
 
-function updateLoginTemplatePagination() {
-  const prevBtn = $("loginTemplatePrev");
-  const nextBtn = $("loginTemplateNext");
-  const pageInfo = $("loginTemplatePageInfo");
-  if (!prevBtn || !nextBtn) return;
-  const totalPages = Math.max(1, Math.ceil(loginTemplateTotal / LOGIN_TEMPLATE_PAGE_SIZE));
-  prevBtn.disabled = loginTemplateCurrentPage <= 1;
-  nextBtn.disabled = loginTemplateCurrentPage >= totalPages;
-  if (pageInfo) {
-    pageInfo.textContent = loginTemplateTotal > 0
-      ? `Page ${loginTemplateCurrentPage} of ${totalPages} (${loginTemplateTotal} total rows)`
-      : "";
-  }
+function ltUpdatePagination() {
+  const totalPages = Math.max(1, Math.ceil(ltTotal / LT_PAGE_SIZE));
+  $("loginTemplatePrev").disabled = ltCurrentPage <= 1;
+  $("loginTemplateNext").disabled = ltCurrentPage >= totalPages;
+  $("loginTemplatePageInfo").textContent = ltTotal > 0
+    ? `Page ${ltCurrentPage} of ${totalPages} (${ltTotal} total rows)`
+    : "";
 }
 
 async function loadLoginTemplateData(page) {
-  const meta = $("loginTemplateMeta");
-  const thead = $("loginTemplateHead");
-  const tbody = $("loginTemplateBody");
-  const maxDisplayLen = 50;
+  const meta   = $("loginTemplateMeta");
+  const thead  = $("loginTemplateHead");
+  const tbody  = $("loginTemplateBody");
   if (!thead || !tbody) return;
-  if (page != null) loginTemplateCurrentPage = Math.max(1, parseInt(page, 10) || 1);
+  if (page != null) ltCurrentPage = Math.max(1, parseInt(page, 10) || 1);
   meta.textContent = "Loading...";
   thead.innerHTML = "";
   tbody.innerHTML = "";
   $("loginTemplatePrev").disabled = true;
   $("loginTemplateNext").disabled = true;
   try {
-    const r = await api(`/login-template-data?page=${loginTemplateCurrentPage}&page_size=${LOGIN_TEMPLATE_PAGE_SIZE}`);
+    const r = await api(ltBuildUrl(ltCurrentPage));
     if (!r.ok) {
       meta.textContent = "Error: HTTP " + r.status;
-      logln("Load login template data error: HTTP " + r.status);
-      updateLoginTemplatePagination();
+      logln("Login template load error: HTTP " + r.status);
+      ltUpdatePagination();
       return;
     }
     const j = await r.json();
     const items = j.items || [];
-    loginTemplateTotal = j.total ?? 0;
-    meta.textContent = `Showing ${items.length} row(s) on this page`;
-    if (items.length === 0) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = "<td colspan=\"20\">No data on this page</td>";
-      tbody.appendChild(tr);
-      updateLoginTemplatePagination();
-      return;
-    }
-    const keys = orderLoginTemplateKeys(Object.keys(items[0]));
+    ltTotal = j.total ?? 0;
+    meta.textContent = `Showing ${items.length} of ${ltTotal} row(s)`;
+
+    // Header
     const headRow = document.createElement("tr");
-    keys.forEach(k => {
+    LT_COLUMNS.forEach(k => {
       const th = document.createElement("th");
       th.textContent = k;
       headRow.appendChild(th);
     });
     thead.appendChild(headRow);
+
+    if (items.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td colspan="${LT_COLUMNS.length}" style="text-align:center">No data found for selected date range</td>`;
+      tbody.appendChild(tr);
+      ltUpdatePagination();
+      return;
+    }
+
     items.forEach(row => {
       const tr = document.createElement("tr");
-      keys.forEach(k => {
+      LT_COLUMNS.forEach(k => {
         const td = document.createElement("td");
-        const v = row[k];
-        const full = v == null ? "" : String(v);
-        td.textContent = shortenForDisplay(full, maxDisplayLen);
-        td.style.maxWidth = "140px";
+        const full = row[k] == null ? "" : String(row[k]);
+        const short = full.length > 60 ? full.slice(0, 60) + "…" : full;
+        td.textContent = short;
+        td.title = full;
+        td.style.maxWidth = "180px";
         td.style.overflow = "hidden";
         td.style.textOverflow = "ellipsis";
-        td.title = full;
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     });
-    updateLoginTemplatePagination();
-    logln("Login template data loaded: page " + loginTemplateCurrentPage + ", " + items.length + " rows");
+    ltUpdatePagination();
   } catch (e) {
     meta.textContent = "Error loading";
-    logln("Load login template data exception: " + e);
-    updateLoginTemplatePagination();
+    logln("Login template load exception: " + e);
+    ltUpdatePagination();
   }
 }
 
-function loginTemplatePrevPage() {
-  if (loginTemplateCurrentPage > 1) loadLoginTemplateData(loginTemplateCurrentPage - 1);
+function ltPrevPage() {
+  if (ltCurrentPage > 1) loadLoginTemplateData(ltCurrentPage - 1);
 }
 
-function loginTemplateNextPage() {
-  const totalPages = Math.max(1, Math.ceil(loginTemplateTotal / LOGIN_TEMPLATE_PAGE_SIZE));
-  if (loginTemplateCurrentPage < totalPages) loadLoginTemplateData(loginTemplateCurrentPage + 1);
+function ltNextPage() {
+  const totalPages = Math.max(1, Math.ceil(ltTotal / LT_PAGE_SIZE));
+  if (ltCurrentPage < totalPages) loadLoginTemplateData(ltCurrentPage + 1);
 }
+
+async function ltDownloadCsv() {
+  const start = $("ltStartDate").value;
+  const end   = $("ltEndDate").value;
+  let url = "/login-template-data/export-csv";
+  const params = [];
+  if (start) params.push(`start_date=${encodeURIComponent(start)}`);
+  if (end)   params.push(`end_date=${encodeURIComponent(end)}`);
+  if (params.length) url += "?" + params.join("&");
+
+  try {
+    logln(`Downloading CSV (${start || "all"} → ${end || "all"})...`);
+    const r = await fetch(url);
+    if (!r.ok) {
+      const err = await r.text();
+      logln("CSV download failed: " + err);
+      return;
+    }
+    const blob = await r.blob();
+    const disp = r.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^"]+)"?/.exec(disp);
+    const fname = m ? m[1] : `login_template_data_${Date.now()}.csv`;
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl; a.download = fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(blobUrl);
+    logln("CSV downloaded: " + fname);
+  } catch (e) {
+    logln("CSV download exception: " + e);
+  }
+}
+
+// Kept for backward compatibility (old button listener name)
+function loginTemplatePrevPage() { ltPrevPage(); }
+function loginTemplateNextPage() { ltNextPage(); }
 
 function deselectAll() {
   const boxes = document.querySelectorAll('#tasksList input[type="checkbox"]');
@@ -463,14 +490,23 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("runSelected").addEventListener("click", () => runAll(true));
   $("deselectAll").addEventListener("click", deselectAll);
   $("selectAll").addEventListener("click", selectAll);
-  $("loadLoginTemplateData").addEventListener("click", () => { loginTemplateCurrentPage = 1; loadLoginTemplateData(1); });
-  $("loginTemplatePrev").addEventListener("click", loginTemplatePrevPage);
-  $("loginTemplateNext").addEventListener("click", loginTemplateNextPage);
+  $("loadLoginTemplateData").addEventListener("click", () => { ltCurrentPage = 1; loadLoginTemplateData(1); });
+  $("ltFilterBtn").addEventListener("click", () => { ltCurrentPage = 1; loadLoginTemplateData(1); });
+  $("ltDownloadCsvBtn").addEventListener("click", ltDownloadCsv);
+  $("loginTemplatePrev").addEventListener("click", ltPrevPage);
+  $("loginTemplateNext").addEventListener("click", ltNextPage);
+
+  // Set default date range (today back 30 days) and load immediately
+  ltSetDefaultDates();
 
   // Auto-login if credentials are cached
   await autoLogin();
 
-   // Initial jobs load + periodic refresh for global table
+  // Initial jobs load + periodic refresh for global table
   await loadJobs();
   setInterval(loadJobs, 10000);
+
+  // Auto-load login template data on startup, then sync every 5 minutes
+  await loadLoginTemplateData(1);
+  setInterval(() => loadLoginTemplateData(ltCurrentPage), 5 * 60 * 1000);
 });

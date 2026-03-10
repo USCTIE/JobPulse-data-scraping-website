@@ -69,9 +69,15 @@
 
     <div class="card" style="margin-top: 20px;">
       <h2>Login template data</h2>
-      <div id="loginTemplateMeta" style="font-size: 12px; opacity: 0.8; margin-bottom: 6px;"></div>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px;">
+        <label>Start Date: <input type="date" id="ltStartDate"></label>
+        <label>End Date: <input type="date" id="ltEndDate"></label>
+        <button id="ltFilterBtn">Filter</button>
+        <button id="ltDownloadCsvBtn">Download CSV</button>
+        <button id="loadLoginTemplateData">Refresh</button>
+      </div>
       <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-        <button id="loadLoginTemplateData">Load login template data</button>
+        <span id="loginTemplateMeta" style="font-size: 12px; opacity: 0.8;"></span>
         <span id="loginTemplatePageInfo" style="font-size: 12px; opacity: 0.9;"></span>
         <button id="loginTemplatePrev" disabled>Previous</button>
         <button id="loginTemplateNext" disabled>Next</button>

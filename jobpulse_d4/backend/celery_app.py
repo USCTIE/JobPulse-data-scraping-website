@@ -23,8 +23,8 @@ def make_celery() -> Celery:
         beat_schedule={
             "daily-etl-ingest": {
             "task": "etl_coordinator",
-            "schedule": 30.0,           # (for testing)
-            # "schedule": crontab(hour=22, minute=0),  
+            # "schedule": 300.0,           # (for testing)
+            "schedule": crontab(hour=22, minute=0),  
         }
         }
     )

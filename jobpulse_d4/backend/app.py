@@ -811,38 +811,46 @@ def list_jobs():
 @app.get("/login-template-data")
 def get_login_template_data():
     """
-    List rows from login_template_data with pagination (for frontend table).
+    List rows from login_template_data with pagination and optional date filtering.
+    Query params: page, page_size, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD)
     """
     page = max(1, int(request.args.get("page", 1)))
     page_size = min(100, max(1, int(request.args.get("page_size", 50))))
     offset = (page - 1) * page_size
+    start_date = request.args.get("start_date", "").strip()
+    end_date = request.args.get("end_date", "").strip()
+
+    clauses, args = [], []
+    if start_date:
+        clauses.append("scrape_date >= %s")
+        args.append(start_date)
+    if end_date:
+        clauses.append("scrape_date <= %s")
+        args.append(end_date)
+    where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS c FROM login_template_data")
+            cur.execute(f"SELECT COUNT(*) AS c FROM login_template_data {where_sql}", args)
             total = cur.fetchone()["c"]
             cur.execute(
-                """SELECT * FROM login_template_data
+                f"""SELECT scrape_date, Title, Company, Location, Salary, Keyword, Date, Posted_time
+                   FROM login_template_data {where_sql}
                    ORDER BY scrape_date DESC, id DESC
                    LIMIT %s OFFSET %s""",
-                (page_size, offset),
+                args + [page_size, offset],
             )
             rows = cur.fetchall()
     finally:
         conn.close()
 
-    # Serialize for JSON (datetime, Decimal, etc.)
     def _serialize(obj):
         if hasattr(obj, "isoformat"):
             return obj.isoformat()
-        if hasattr(obj, "__float__") and not isinstance(obj, (int, float, bool)):
-            return float(obj) if obj is not None else None
         return obj
 
-    items = []
-    for row in rows:
-        items.append({k: _serialize(v) for k, v in row.items()})
+    items = [{k: _serialize(v) for k, v in row.items()} for row in rows]
 
     return jsonify({
         "total": total,
@@ -850,6 +858,65 @@ def get_login_template_data():
         "page_size": page_size,
         "items": items,
     })
+
+
+@app.get("/login-template-data/export-csv")
+def export_login_template_csv():
+    """
+    Export login_template_data as CSV filtered by date range.
+    Query params: start_date, end_date (YYYY-MM-DD)
+    """
+    start_date = request.args.get("start_date", "").strip()
+    end_date = request.args.get("end_date", "").strip()
+
+    clauses, args = [], []
+    if start_date:
+        clauses.append("scrape_date >= %s")
+        args.append(start_date)
+    if end_date:
+        clauses.append("scrape_date <= %s")
+        args.append(end_date)
+    where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT * FROM login_template_data {where_sql}
+                   ORDER BY scrape_date DESC, id DESC""",
+                args,
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    def _serialize(obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return obj
+
+    fieldnames = [k for k in rows[0].keys() if k != "id"] if rows else [
+        "scrape_date", "Input_URL", "Keyword", "Result_count_for_reference_only",
+        "Location", "Current_Page", "Current_Page_URL", "Title", "Title_URL", "Image",
+        "Company", "Date", "About_the_job", "Posted_time", "Salary", "People_applied",
+        "Job_preference_1", "Job_preference_2", "Job_preference_3", "Job_preference_4",
+        "Company_URL", "Company_follower", "Company_size", "Count_of_employee_onLinkedIn",
+        "Company_Intro", "created_at"
+    ]
+    output = io.StringIO()
+    w = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+    w.writeheader()
+    for row in rows:
+        w.writerow({k: _serialize(v) for k, v in row.items()})
+
+    ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    label = f"{start_date or 'all'}_to_{end_date or 'all'}"
+    filename = f"login_template_data_{label}_{ts}.csv"
+    return Response(
+        response=output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @app.get("/jobs/<int:job_id>")

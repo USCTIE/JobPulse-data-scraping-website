@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from flask_cors import CORS
 
 from celery_app import celery
+from celery import group
 from db import (
     get_conn,
     create_export_job,
@@ -37,8 +38,6 @@ BASE_URL = "https://advancedapi.octoparse.com"
 # Default to env-based credentials
 USERNAME = os.getenv("OCTOPARSE_USERNAME")
 PASSWORD = os.getenv("OCTOPARSE_PASSWORD")
-LINKEDIN_LOCAL_TASK_ID = "36014d64-f07c-4c11-a4fa-dcd59c7094e4"
-
 # Directory where background exports are stored.
 EXPORTS_DIR = os.getenv("EXPORTS_DIR", "exports")
 os.makedirs(EXPORTS_DIR, exist_ok=True)
@@ -439,16 +438,15 @@ def wait_for_tasks(task_ids):
             continue
 
         data = res.json().get("data", [])
-        statuses = {d["taskId"]: d["status"] for d in data}
+        statuses = {str(d["taskId"]): d["status"] for d in data}
         print(statuses)
 
         elapsed = time.time() - start_time
         guard_expired = elapsed > STALE_GUARD_TIMEOUT
 
-        for tid, status in statuses.items():
+        for tid_str, status in statuses.items():
             if status not in TERMINAL:
-                seen_active.add(tid)
-            tid_str = str(tid)
+                seen_active.add(tid_str)
             if status == "Unexecuted":
                 unexecuted_count[tid_str] = unexecuted_count.get(tid_str, 0) + 1
                 if unexecuted_count[tid_str] == UNEXECUTED_THRESHOLD:
@@ -456,9 +454,9 @@ def wait_for_tasks(task_ids):
                     try:
                         conn = get_conn()
                         with conn.cursor() as cur:
-                            add_local_backup_task_id(cur, tid)
+                            add_local_backup_task_id(cur, tid_str)
                     except Exception as e:
-                        print(f"Failed to add local_backup_task_id {tid}:", e)
+                        print(f"Failed to add local_backup_task_id {tid_str}:", e)
                     finally:
                         if conn:
                             conn.close()
@@ -467,18 +465,19 @@ def wait_for_tasks(task_ids):
 
         all_done = True
         for tid in task_ids:
-            status = statuses.get(tid)
+            tid_str = str(tid)
+            status = statuses.get(tid_str)
             if status is None:
                 all_done = False
                 break
             if status in TERMINAL:
-                if tid in seen_active or guard_expired:
+                if tid_str in seen_active or guard_expired:
                     continue
                 else:
-                    print(f"⚠️  Task {tid} reports '{status}' but hasn't been seen active yet — treating as stale")
+                    print(f"⚠️  Task {tid_str} reports '{status}' but hasn't been seen active yet — treating as stale")
                     all_done = False
                     break
-            elif status == "Unexecuted" and unexecuted_count.get(str(tid), 0) >= UNEXECUTED_THRESHOLD:
+            elif status == "Unexecuted" and unexecuted_count.get(tid_str, 0) >= UNEXECUTED_THRESHOLD:
                 continue
             else:
                 all_done = False
@@ -528,7 +527,6 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
     except Exception as e:
         print("Failed to load local_backup_task_ids:", e)
         local_backup_ids = set()
-    local_backup_ids = local_backup_ids | {str(LINKEDIN_LOCAL_TASK_ID)} if LINKEDIN_LOCAL_TASK_ID else local_backup_ids
 
     # 2) start each task (skip tasks in local_backup_ids — they are run locally and backed up to cloud)
     wait_ids = [tid for tid in task_ids if str(tid) not in local_backup_ids]
@@ -539,8 +537,8 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
         if str(tid) in local_backup_ids:
             continue
         try:
-            _octo_post("/api/task/RemoveDataByTaskId", params={"taskId": tid})
-            time.sleep(2)  # Give Octoparse time to commit the clear
+            # _octo_post("/api/task/RemoveDataByTaskId", params={"taskId": tid})
+            # time.sleep(2)  # Give Octoparse time to commit the clear
             _octo_post("/api/task/StartTask", params={"taskId": tid})
         except Exception as e:
             print("StartTask error:", tid, e)
@@ -560,6 +558,7 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
     wb = Workbook()
     default_sheet_used = False
     total_tasks = len(tasks)
+    failed_tasks = []
 
     for idx, t in enumerate(tasks):
         tid = t.get("taskId")
@@ -635,6 +634,8 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
 
         if not all_rows:
             print(f"Task {tid} ({tname}): no rows returned")
+            failed_tasks.append(tname)
+            continue
 
         # write to sheet
         if not default_sheet_used:
@@ -658,6 +659,9 @@ def build_octoparse_workbook(task_group_id, selected_task_ids=None, progress_cb=
 
         if progress_cb:
             progress_cb(f"Fetched data for {idx+1}/{total_tasks} tasks")
+
+    if failed_tasks and len(failed_tasks) == total_tasks:
+        raise RuntimeError(f"All tasks returned no data after retries: {', '.join(failed_tasks)}")
 
     return wb, tasks
 
@@ -804,6 +808,50 @@ def list_jobs():
     return jsonify({"items": jobs})
 
 
+@app.get("/login-template-data")
+def get_login_template_data():
+    """
+    List rows from login_template_data with pagination (for frontend table).
+    """
+    page = max(1, int(request.args.get("page", 1)))
+    page_size = min(100, max(1, int(request.args.get("page_size", 50))))
+    offset = (page - 1) * page_size
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM login_template_data")
+            total = cur.fetchone()["c"]
+            cur.execute(
+                """SELECT * FROM login_template_data
+                   ORDER BY scrape_date DESC, id DESC
+                   LIMIT %s OFFSET %s""",
+                (page_size, offset),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    # Serialize for JSON (datetime, Decimal, etc.)
+    def _serialize(obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        if hasattr(obj, "__float__") and not isinstance(obj, (int, float, bool)):
+            return float(obj) if obj is not None else None
+        return obj
+
+    items = []
+    for row in rows:
+        items.append({k: _serialize(v) for k, v in row.items()})
+
+    return jsonify({
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items,
+    })
+
+
 @app.get("/jobs/<int:job_id>")
 def get_job(job_id):
     """
@@ -862,6 +910,86 @@ def download_job(job_id):
         download_name=file_name,
     )
 
+
+@celery.task(name="etl_coordinator")
+def etl_coordinator():
+    """Reads all task IDs from DB and dispatches each as an independent subtask."""
+    from db import get_conn
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT task_id FROM local_backup_tasks")
+            task_ids = [row["task_id"] for row in cur.fetchall()]
+            print("tasks are",task_ids)
+    finally:
+        conn.close()
+    if not task_ids:
+        print("[ETL] No task IDs found in DB, nothing to do.")
+        return
+    # Dispatch all as parallel independent tasks
+    job = group(etl_ingest_single.s(tid) for tid in task_ids)
+    job.apply_async()
+    print(f"[ETL] Dispatched {len(task_ids)} ingest tasks")
+
+@celery.task(name="etl_ingest_single", bind=True, max_retries=3)
+def etl_ingest_single(self, task_id):
+    """Scheduled ETL: fetch non-exported data from Octoparse and upsert into login_template_data."""
+    try:
+        from db import get_conn, upsert_login_template_data
+        from datetime import date
+
+        size = 100
+        total_upserted = 0
+        scrape_date = date.today()
+
+        conn = get_conn()
+        try:
+            while True:
+                res = requests.get(
+                    f"{BASE_URL}/api/notexportdata/gettop",
+                    params={"taskId": task_id, "size": size},
+                    headers=token_mgr.headers(),
+                    timeout=60,
+                )
+                if res.status_code != 200:
+                    print(f"[ETL] Failed to fetch data for task {task_id}: {res.text}")
+                    break
+
+                data = res.json().get("data", {})
+                items = data.get("dataList", [])
+
+                if not items:
+                    print(f"[ETL] No more non-exported data for task {task_id}")
+                    break
+
+                with conn.cursor() as cur:
+                    for j in items:
+                        try:
+                            upsert_login_template_data(cur, j, scrape_date)
+                            total_upserted += 1
+                        except Exception as e:
+                            print(f"[ETL] Upsert error: {e}")
+
+                update_res = requests.post(
+                    f"{BASE_URL}/api/notexportdata/update",
+                    params={"taskId": task_id},
+                    headers=token_mgr.headers(),
+                    timeout=60,
+                )
+                if update_res.status_code != 200:
+                    print(f"[ETL] Failed to mark data as exported for task {task_id}: {update_res.text}")
+                    break
+
+                if len(items) < size:
+                    break
+        finally:
+            conn.close()
+
+        print(f"[ETL] Done. Upserted {total_upserted} rows into login_template_data for task {task_id}")
+        return {"upserted": total_upserted, "task_id": task_id}
+    except Exception as exc:
+        print(f"[ETL] Task {task_id} failed: {exc}")
+        raise self.retry(exc=exc, countdown=60)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=1112)

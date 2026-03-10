@@ -66,6 +66,25 @@
         </table>
       </div>
     </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <h2>Login template data</h2>
+      <div id="loginTemplateMeta" style="font-size: 12px; opacity: 0.8; margin-bottom: 6px;"></div>
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+        <button id="loadLoginTemplateData">Load login template data</button>
+        <span id="loginTemplatePageInfo" style="font-size: 12px; opacity: 0.9;"></span>
+        <button id="loginTemplatePrev" disabled>Previous</button>
+        <button id="loginTemplateNext" disabled>Next</button>
+      </div>
+      <div class="jobs-table-wrap" style="margin-top: 10px; overflow-x: auto;">
+        <table id="loginTemplateTable">
+          <thead id="loginTemplateHead">
+          </thead>
+          <tbody id="loginTemplateBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script src="/static/taskrunner.js"></script>

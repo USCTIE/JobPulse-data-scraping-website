@@ -320,6 +320,127 @@ function renderJobsTableRow(job) {
   }
 }
 
+const LOGIN_TEMPLATE_COLUMN_ORDER = [
+  "id", "Title", "Company", "Location", "Salary", "Keyword",
+  "scrape_date", "Date", "Posted_time", "About_the_job",
+  "Input_URL", "Current_Page_URL", "Title_URL", "Company_URL",
+  "Result_count_for_reference_only", "Current_Page", "Image",
+  "People_applied", "Job_preference_1", "Job_preference_2",
+  "Job_preference_3", "Job_preference_4", "Company_follower",
+  "Company_size", "Count_of_employee_onLinkedIn", "Company_Intro",
+  "created_at"
+];
+
+function orderLoginTemplateKeys(rawKeys) {
+  const ordered = [];
+  const set = new Set(rawKeys);
+  for (const k of LOGIN_TEMPLATE_COLUMN_ORDER) {
+    if (set.has(k)) { ordered.push(k); set.delete(k); }
+  }
+  for (const k of rawKeys) {
+    if (set.has(k)) ordered.push(k);
+  }
+  return ordered;
+}
+
+function shortenForDisplay(str, maxLen) {
+  if (str == null || str === "") return "";
+  const s = String(str);
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen) + "…";
+}
+
+const LOGIN_TEMPLATE_PAGE_SIZE = 100;
+let loginTemplateCurrentPage = 1;
+let loginTemplateTotal = 0;
+
+function updateLoginTemplatePagination() {
+  const prevBtn = $("loginTemplatePrev");
+  const nextBtn = $("loginTemplateNext");
+  const pageInfo = $("loginTemplatePageInfo");
+  if (!prevBtn || !nextBtn) return;
+  const totalPages = Math.max(1, Math.ceil(loginTemplateTotal / LOGIN_TEMPLATE_PAGE_SIZE));
+  prevBtn.disabled = loginTemplateCurrentPage <= 1;
+  nextBtn.disabled = loginTemplateCurrentPage >= totalPages;
+  if (pageInfo) {
+    pageInfo.textContent = loginTemplateTotal > 0
+      ? `Page ${loginTemplateCurrentPage} of ${totalPages} (${loginTemplateTotal} total rows)`
+      : "";
+  }
+}
+
+async function loadLoginTemplateData(page) {
+  const meta = $("loginTemplateMeta");
+  const thead = $("loginTemplateHead");
+  const tbody = $("loginTemplateBody");
+  const maxDisplayLen = 50;
+  if (!thead || !tbody) return;
+  if (page != null) loginTemplateCurrentPage = Math.max(1, parseInt(page, 10) || 1);
+  meta.textContent = "Loading...";
+  thead.innerHTML = "";
+  tbody.innerHTML = "";
+  $("loginTemplatePrev").disabled = true;
+  $("loginTemplateNext").disabled = true;
+  try {
+    const r = await api(`/login-template-data?page=${loginTemplateCurrentPage}&page_size=${LOGIN_TEMPLATE_PAGE_SIZE}`);
+    if (!r.ok) {
+      meta.textContent = "Error: HTTP " + r.status;
+      logln("Load login template data error: HTTP " + r.status);
+      updateLoginTemplatePagination();
+      return;
+    }
+    const j = await r.json();
+    const items = j.items || [];
+    loginTemplateTotal = j.total ?? 0;
+    meta.textContent = `Showing ${items.length} row(s) on this page`;
+    if (items.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = "<td colspan=\"20\">No data on this page</td>";
+      tbody.appendChild(tr);
+      updateLoginTemplatePagination();
+      return;
+    }
+    const keys = orderLoginTemplateKeys(Object.keys(items[0]));
+    const headRow = document.createElement("tr");
+    keys.forEach(k => {
+      const th = document.createElement("th");
+      th.textContent = k;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    items.forEach(row => {
+      const tr = document.createElement("tr");
+      keys.forEach(k => {
+        const td = document.createElement("td");
+        const v = row[k];
+        const full = v == null ? "" : String(v);
+        td.textContent = shortenForDisplay(full, maxDisplayLen);
+        td.style.maxWidth = "140px";
+        td.style.overflow = "hidden";
+        td.style.textOverflow = "ellipsis";
+        td.title = full;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    updateLoginTemplatePagination();
+    logln("Login template data loaded: page " + loginTemplateCurrentPage + ", " + items.length + " rows");
+  } catch (e) {
+    meta.textContent = "Error loading";
+    logln("Load login template data exception: " + e);
+    updateLoginTemplatePagination();
+  }
+}
+
+function loginTemplatePrevPage() {
+  if (loginTemplateCurrentPage > 1) loadLoginTemplateData(loginTemplateCurrentPage - 1);
+}
+
+function loginTemplateNextPage() {
+  const totalPages = Math.max(1, Math.ceil(loginTemplateTotal / LOGIN_TEMPLATE_PAGE_SIZE));
+  if (loginTemplateCurrentPage < totalPages) loadLoginTemplateData(loginTemplateCurrentPage + 1);
+}
+
 function deselectAll() {
   const boxes = document.querySelectorAll('#tasksList input[type="checkbox"]');
   let n = 0;
@@ -342,6 +463,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("runSelected").addEventListener("click", () => runAll(true));
   $("deselectAll").addEventListener("click", deselectAll);
   $("selectAll").addEventListener("click", selectAll);
+  $("loadLoginTemplateData").addEventListener("click", () => { loginTemplateCurrentPage = 1; loadLoginTemplateData(1); });
+  $("loginTemplatePrev").addEventListener("click", loginTemplatePrevPage);
+  $("loginTemplateNext").addEventListener("click", loginTemplateNextPage);
 
   // Auto-login if credentials are cached
   await autoLogin();

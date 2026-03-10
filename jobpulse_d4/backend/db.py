@@ -1,4 +1,4 @@
-import os, json, pymysql
+import os, json, re, pymysql
 
 def get_conn():
     return pymysql.connect(
@@ -54,6 +54,55 @@ def upsert_job(cur, j):
         j.get("posterFullName") or j.get("hiring_person"),
         j.get("min_pay"),
         j.get("max_pay"),
+    ))
+
+def _parse_int(val):
+    if val is None:
+        return None
+    if isinstance(val, int):
+        return val
+    m = re.search(r'\d+', str(val))
+    return int(m.group()) if m else None
+
+
+def upsert_login_template_data(cur, j, scrape_date):
+    sql = """
+    INSERT INTO login_template_data (
+        scrape_date, Input_URL, Keyword, Result_count_for_reference_only,
+        Location, Current_Page, Current_Page_URL, Title, Title_URL,
+        Image, Company, Date, About_the_job, Posted_time, Salary,
+        People_applied, Job_preference_1, Job_preference_2,
+        Job_preference_3, Job_preference_4, Company_URL,
+        Company_follower, Company_size, Count_of_employee_onLinkedIn,
+        Company_Intro
+    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    cur.execute(sql, (
+        scrape_date,
+        j.get("Input_URL"),
+        j.get("Keyword"),
+        _parse_int(j.get("Result_count_for_reference_only")),
+        j.get("Location"),
+        _parse_int(j.get("Current_Page")),
+        j.get("Current_Page_URL"),
+        j.get("Title"),
+        j.get("Title_URL"),
+        j.get("Image"),
+        j.get("Company"),
+        j.get("Date"),
+        j.get("About_the_job"),
+        j.get("Posted_time"),
+        j.get("Salary"),
+        j.get("People_applied"),
+        j.get("Job_preference_1"),
+        j.get("Job_preference_2"),
+        j.get("Job_preference_3"),
+        j.get("Job_preference_4"),
+        j.get("Company_URL"),
+        j.get("Company_follower"),
+        j.get("Company_size"),
+        j.get("Count_of_employee_onLinkedIn"),
+        j.get("Company_Intro"),
     ))
 
 def create_export_job(cur, task_group_id, selected_task_ids, task_group_name=None, task_names=None):

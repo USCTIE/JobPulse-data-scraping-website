@@ -1,6 +1,7 @@
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 
 def make_celery() -> Celery:
@@ -19,8 +20,14 @@ def make_celery() -> Celery:
         result_serializer="json",
         timezone="UTC",
         enable_utc=True,
+        beat_schedule={
+            "daily-etl-ingest": {
+            "task": "etl_coordinator",
+            "schedule": 30.0,           # (for testing)
+            # "schedule": crontab(hour=22, minute=0),  
+        }
+        }
     )
-
     return celery
 
 

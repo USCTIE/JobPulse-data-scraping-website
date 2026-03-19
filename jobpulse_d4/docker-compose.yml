@@ -1,7 +1,8 @@
 services:
   web:
     build: ./backend
-    restart: always
+    depends_on:
+      - redis
     env_file:
       - ./backend/.env
     environment:
@@ -38,7 +39,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      FLASK_ENV: development
+      FLASK_ENV: production
       DB_HOST: db
       REDIS_URL: redis://redis:6379/0
     command: ["celery", "-A", "celery_app.celery", "beat", "--loglevel=INFO"]

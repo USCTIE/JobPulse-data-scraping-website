@@ -24,7 +24,7 @@ def make_celery() -> Celery:
             "daily-etl-ingest": {
             "task": "etl_coordinator",
             # "schedule": 300.0,           # (for testing)
-            "schedule": crontab(hour=22, minute=0),  
+            "schedule": crontab(hour=6, minute=30), #UTC Time zone  
         }
         }
     )

@@ -34,13 +34,11 @@ services:
   celery_beat:
     build: ./backend
     depends_on:
-      - db
       - redis
     env_file:
       - ./backend/.env
     environment:
       FLASK_ENV: production
-      DB_HOST: db
       REDIS_URL: redis://redis:6379/0
     command: ["celery", "-A", "celery_app.celery", "beat", "--loglevel=INFO"]
     volumes:

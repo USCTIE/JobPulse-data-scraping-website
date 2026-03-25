@@ -33,7 +33,7 @@ Watch the end‑to‑end demo here:
 
 ## Architecture Flowchart
 
-![Architecture Flowchart](assets/architecture.png)
+<img width="3904" height="2723" alt="image" src="https://github.com/user-attachments/assets/ec2fd976-7210-441c-9551-e15ed7ee450c" />
 
 The diagram above shows the two main parts of the system:
 

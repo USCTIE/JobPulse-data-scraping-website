@@ -71,7 +71,7 @@ The diagram above shows the two main parts of the system:
 Copy the example env file and fill in your values:
 
 ```bash
-cp backend/.env.example backend/.env
+cp jobpulse_d4/backend/.env.example jobpulse_d4/backend/.env
 ```
 
 `backend/.env` should contain (do **not** commit real secrets):

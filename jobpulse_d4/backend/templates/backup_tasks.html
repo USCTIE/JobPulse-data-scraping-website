@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobPulse — Local Backup Tasks</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>JobPulse — Local Backup Tasks</h1>
+    <p><a href="/">← Back to main dashboard</a></p>
+
+    <div class="card">
+      <h2>Add Task ID</h2>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <input id="newTaskId" placeholder="Enter Octoparse Task ID" style="flex: 1;">
+        <button id="addTaskIdBtn">Add</button>
+      </div>
+      <div id="addFeedback" style="margin-top: 8px; font-size: 13px;"></div>
+    </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <h2>Current Backup Tasks</h2>
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+        <span id="backupTasksMeta" style="font-size: 12px; opacity: 0.8;"></span>
+        <button id="refreshBtn">Refresh</button>
+      </div>
+      <div class="jobs-table-wrap" style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Task ID</th>
+              <th>Created At</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="backupTasksBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <h2>Logs</h2>
+      <pre id="logs" class="logs"></pre>
+    </div>
+  </div>
+
+  <script src="/static/backup_tasks.js"></script>
+</body>
+</html>

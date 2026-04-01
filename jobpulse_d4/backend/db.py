@@ -171,3 +171,13 @@ def add_local_backup_task_id(cur, task_id):
         "INSERT IGNORE INTO local_backup_tasks (task_id) VALUES (%s)",
         (str(task_id),),
     )
+
+
+def remove_local_backup_task_id(cur, task_id):
+    cur.execute("DELETE FROM local_backup_tasks WHERE task_id = %s", (str(task_id),))
+    return cur.rowcount
+
+
+def list_local_backup_tasks(cur):
+    cur.execute("SELECT task_id, created_at FROM local_backup_tasks ORDER BY created_at DESC")
+    return cur.fetchall()

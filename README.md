@@ -106,7 +106,7 @@ This spins up all five services including a local MySQL database:
 
 ```bash
 cd jobpulse_d4
-docker compose -f docker-compose-local.yml up --build
+docker-compose -f docker-compose-local.yml up  -d --build
 # then open:
 http://localhost:5000
 ```

@@ -165,11 +165,12 @@ def get_local_backup_task_ids(cur):
     return {str(r["task_id"]) for r in rows} if rows else set()
 
 
-def add_local_backup_task_id(cur, task_id):
+def add_local_backup_task_id(cur, task_id, task_name=None):
     # Add a task ID to local_backup_tasks
     cur.execute(
-        "INSERT IGNORE INTO local_backup_tasks (task_id) VALUES (%s)",
-        (str(task_id),),
+        """INSERT INTO local_backup_tasks (task_id, task_name) VALUES (%s, %s)
+           ON DUPLICATE KEY UPDATE task_name = COALESCE(VALUES(task_name), task_name)""",
+        (str(task_id), task_name),
     )
 
 
@@ -179,5 +180,5 @@ def remove_local_backup_task_id(cur, task_id):
 
 
 def list_local_backup_tasks(cur):
-    cur.execute("SELECT task_id, created_at FROM local_backup_tasks ORDER BY created_at DESC")
+    cur.execute("SELECT task_id, task_name, created_at FROM local_backup_tasks ORDER BY created_at DESC")
     return cur.fetchall()

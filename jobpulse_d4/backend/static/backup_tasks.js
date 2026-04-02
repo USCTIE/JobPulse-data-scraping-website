@@ -19,7 +19,7 @@ async function loadBackupTasks() {
     meta.textContent = `${items.length} task(s)`;
 
     if (items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center">No backup tasks configured</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center">No backup tasks configured</td></tr>';
       return;
     }
 
@@ -31,8 +31,19 @@ async function loadBackupTasks() {
       tdId.style.fontFamily = "monospace";
       tr.appendChild(tdId);
 
+      const tdName = document.createElement("td");
+      tdName.textContent = row.task_name || "—";
+      tr.appendChild(tdName);
+
       const tdDate = document.createElement("td");
-      tdDate.textContent = row.created_at || "";
+      if (row.created_at) {
+        const raw = row.created_at.endsWith("Z") ? row.created_at : row.created_at + "Z";
+        const d = new Date(raw);
+        tdDate.textContent = d.toLocaleString(undefined, {
+          year: "numeric", month: "short", day: "numeric",
+          hour: "numeric", minute: "2-digit"
+        });
+      }
       tr.appendChild(tdDate);
 
       const tdAction = document.createElement("td");

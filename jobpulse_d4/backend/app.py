@@ -173,7 +173,7 @@ def add_local_backup_task_route():
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            add_local_backup_task_id(cur, task_id)
+            add_local_backup_task_id(cur, task_id, task_name)
     finally:
         conn.close()
 

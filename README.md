@@ -138,6 +138,21 @@ http://localhost:5000
 
 > This compose file does **not** include a MySQL service—make sure your external database is reachable and initialized with `backend/schema.sql`.
 
+### Run `schema.sql` on RDS
+
+Use this when your RDS is an external **MySQL** database (the schema is MySQL 8 compatible).
+
+1. Apply the schema using your RDS admin/master user:
+   ```bash
+   mysql -h <rds-endpoint> -P 3306 -u <admin-user> -p < jobpulse_d4/backend/schema.sql
+   ```
+   (Prefer restricting `jobuser` to your EC2/container network/IP instead of `%` if possible.)
+2. Update `jobpulse_d4/backend/.env`:
+   - `DB_HOST=<rds-endpoint>`
+   - `DB_USER=admin`
+   - `DB_PASSWORD=admindatabase`
+   - `DB_NAME=jobpulse`
+
 ---
 
 ## Using the App

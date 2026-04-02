@@ -12,3 +12,4 @@
 exports/
 
 celerybeat-schedule
+jobpulse_d4/backend/celerybeat-schedule

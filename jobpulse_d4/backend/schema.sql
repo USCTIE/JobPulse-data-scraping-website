@@ -79,6 +79,7 @@ CREATE TABLE exports (
 
 CREATE TABLE local_backup_tasks (
   task_id VARCHAR(64) PRIMARY KEY,
+  task_name TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

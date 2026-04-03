@@ -25,6 +25,8 @@ from db import (
     list_export_jobs,
     get_local_backup_task_ids,
     add_local_backup_task_id,
+    remove_local_backup_task_id,
+    list_local_backup_tasks,
 )
 
 # Load .env variables
@@ -114,6 +116,103 @@ def _handle_response(res: requests.Response):
 @app.get("/")
 def home():
     return render_template("index.html")
+
+@app.get("/backup-tasks")
+def backup_tasks_page():
+    return render_template("backup_tasks.html")
+
+
+@app.get("/local-backup-tasks")
+def list_local_backup_tasks_route():
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            rows = list_local_backup_tasks(cur)
+    finally:
+        conn.close()
+
+    def _serialize(obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return obj
+
+    items = [{k: _serialize(v) for k, v in row.items()} for row in rows]
+    return jsonify({"items": items, "total": len(items)})
+
+
+@app.post("/local-backup-tasks")
+def add_local_backup_task_route():
+    body = request.get_json() or {}
+    task_id = (body.get("task_id") or "").strip()
+    if not task_id:
+        return jsonify({"error": "task_id is required"}), 400
+
+    # Validate via Octoparse API before inserting
+    try:
+        res = requests.post(
+            f"{BASE_URL}/api/task/GetTaskStatusByIdList",
+            json={"taskIdList": [task_id]},
+            headers=token_mgr.headers(),
+            timeout=30,
+        )
+        if res.status_code == 429:
+            return jsonify({"error": "Octoparse rate limit hit. Please wait 5 seconds and try again."}), 429
+
+        if res.status_code != 200:
+            return jsonify({"error": f"Octoparse API error (HTTP {res.status_code})"}), 502
+
+        octo_data = res.json().get("data", [])
+        if not isinstance(octo_data, list) or len(octo_data) == 0:
+            return jsonify({"error": "Invalid task ID — not found in your Octoparse account."}), 404
+
+        # Pull the task name from the response
+        task_name = octo_data[0].get("taskName") or octo_data[0].get("taskDescription") or None
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Could not reach Octoparse API: {e}"}), 502
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            add_local_backup_task_id(cur, task_id, task_name)
+    finally:
+        conn.close()
+
+    return jsonify({"ok": True, "task_id": task_id, "task_name": task_name})
+
+
+@app.delete("/local-backup-tasks/<task_id>")
+def remove_local_backup_task_route(task_id):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            deleted = remove_local_backup_task_id(cur, task_id)
+    finally:
+        conn.close()
+
+    if deleted == 0:
+        return jsonify({"error": "task_id not found"}), 404
+    return jsonify({"ok": True, "task_id": task_id})
+
+
+@app.get("/validate-task/<task_id>")
+def validate_task(task_id):
+    """Call Octoparse status API and return the raw response for inspection."""
+    res = requests.post(
+        f"{BASE_URL}/api/task/GetTaskStatusByIdList",
+        json={"taskIdList": [task_id]},
+        headers=token_mgr.headers(),
+        timeout=30,
+    )
+    try:
+        body = res.json()
+    except Exception:
+        body = res.text
+    return jsonify({
+        "http_status": res.status_code,
+        "response_body": body,
+        "queried_task_id": task_id,
+    })
+
 
 @app.post("/login")
 def login():

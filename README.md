@@ -297,3 +297,5 @@ The run may still be populating. Increase **Wait (sec)**, bump **Size**, or re-r
 ## License
 
 This project is for course use (Project 28). If you plan to reuse or publish, add an explicit license (e.g., MIT) and review Octoparse’s API terms. -->
+
+mysql -h jobpulse-db.cz68eemw42lo.us-east-2.rds.amazonaws.com -P 3306 -u admin -p < jobpulse_d4/backend/schema.sql

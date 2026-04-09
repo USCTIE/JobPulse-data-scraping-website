@@ -1,12 +1,45 @@
 services:
   web:
     build: ./backend
-    restart: always
+    depends_on:
+      - redis
     env_file:
       - ./backend/.env
     environment:
       FLASK_ENV: production
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "5000:5000"
+    volumes:
+      - ./backend:/app
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+
+  celery_worker:
+    build: ./backend
+    depends_on:
+      - redis
+    env_file:
+      - ./backend/.env
+    environment:
+      FLASK_ENV: production
+      REDIS_URL: redis://redis:6379/0
+    command: ["celery", "-A", "celery_app.celery", "worker", "--loglevel=INFO"]
+    volumes:
+      - ./backend:/app
+  celery_beat:
+    build: ./backend
+    depends_on:
+      - redis
+    env_file:
+      - ./backend/.env
+    environment:
+      FLASK_ENV: production
+      REDIS_URL: redis://redis:6379/0
+    command: ["celery", "-A", "celery_app.celery", "beat", "--loglevel=INFO"]
     volumes:
       - ./backend:/app

@@ -43,6 +43,54 @@
       <h2>Logs</h2>
       <pre id="logs" class="logs"></pre>
     </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <h2>Exports (all jobs)</h2>
+      <div id="jobsMeta" style="font-size: 12px; opacity: 0.8; margin-bottom: 6px;"></div>
+      <div class="jobs-table-wrap">
+        <table id="jobsTable">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Task group</th>
+              <th>Task name(s)</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Created</th>
+              <th>File</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          <tbody id="jobsBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <h2>Login template data</h2>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px;">
+        <label>Start Date: <input type="date" id="ltStartDate"></label>
+        <label>End Date: <input type="date" id="ltEndDate"></label>
+        <button id="ltFilterBtn">Filter</button>
+        <button id="ltDownloadCsvBtn">Download CSV</button>
+        <button id="loadLoginTemplateData">Refresh</button>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+        <span id="loginTemplateMeta" style="font-size: 12px; opacity: 0.8;"></span>
+        <span id="loginTemplatePageInfo" style="font-size: 12px; opacity: 0.9;"></span>
+        <button id="loginTemplatePrev" disabled>Previous</button>
+        <button id="loginTemplateNext" disabled>Next</button>
+      </div>
+      <div class="jobs-table-wrap" style="margin-top: 10px; overflow-x: auto;">
+        <table id="loginTemplateTable">
+          <thead id="loginTemplateHead">
+          </thead>
+          <tbody id="loginTemplateBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script src="/static/taskrunner.js"></script>

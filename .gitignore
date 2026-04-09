@@ -1,3 +1,15 @@
 .env
-__pycache__/*
-.idea/*
+.idea/
+
+# Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.python-version
+
+# Exports
+exports/
+
+celerybeat-schedule
+jobpulse_d4/backend/celerybeat-schedule
